@@ -314,14 +314,14 @@ let subst_of_manifest { ptyp_attributes; ptyp_loc ; _ } =
       (`Lid src, { ptyp_loc = pexp_loc; ptyp_attributes = pexp_attributes;
                    ptyp_desc = Ptyp_constr (dst, []) }) :: subst_of_expr rest
     | { pexp_loc ; _ } ->
-      raise_errorf ~loc:pexp_loc "Invalid [@with] syntax"
+      raise_errorf ~loc:pexp_loc "Invalid [@with] syntax: expected identifier assignment"
   in
   match Ast_convenience.find_attr "with" ptyp_attributes with
   | None -> []
   | Some (PStr [{ pstr_desc = Pstr_eval (expr, []) ; _ }]) ->
     subst_of_expr expr
   | Some _ ->
-    raise_errorf ~loc:ptyp_loc "Invalid [@with] syntax"
+    raise_errorf ~loc:ptyp_loc "Invalid [@with] syntax: expected an expression"
 
 let uncapitalize = String.uncapitalize_ascii
 
@@ -337,52 +337,77 @@ let is_self_reference lid =
     in fn = mn
   | _ -> false
 
-let type_declaration ~tool_name mapper type_decl =
+let type_declaration ~tool_name type_decl =
+  let loc = type_decl.ptype_loc in
   match type_decl with
-  | { ptype_attributes; ptype_name; ptype_manifest = Some {
-        ptyp_desc = Ptyp_extension ({ txt = "import"; loc }, payload) ; _ } ; _ } ->
-    begin match payload with
-    | PTyp ({ ptyp_desc = Ptyp_constr ({ txt = lid; loc }, _) ; _ } as manifest) ->
-      if tool_name = "ocamldep" then
-        (* Just put it as manifest *)
-        if is_self_reference lid then
-          { type_decl with ptype_manifest = None }
-        else
-          { type_decl with ptype_manifest = Some manifest }
+  | { ptype_attributes
+    ; ptype_name
+    ; ptype_manifest =
+        Some ({ ptyp_desc = Ptyp_constr ({ txt = lid; loc }, _) ; _ } as manifest)
+    ; _ }
+    ->
+    if tool_name = "ocamldep" then
+      (* Just put it as manifest *)
+      if is_self_reference lid then
+        { type_decl with ptype_manifest = None }
       else
-        with_default_loc loc (fun () ->
-          let ttype_decl =
-            let env = Lazy.force lazy_env in
-            match lid with
-            | Lapply _ ->
-              raise_errorf ~loc
-                "[%%import] cannot import a functor application %s"
-                (string_of_lid lid)
-            | Lident _ as head_id ->
-              (* In this case, we know for sure that the user intends this lident
-                 as a type name, so we use Typetexp.find_type and let the failure
-                 cases propagate to the user. *)
-              Compat.find_type env ~loc head_id |> snd
-            | Ldot (parent_id, elem) ->
-              let sig_items = locate_sig ~loc env parent_id in
-              get_type_decl ~loc sig_items parent_id elem
-          in
-          let m, s = if is_self_reference lid then
-              None, []
+        { type_decl with ptype_manifest = Some manifest }
+    else
+      with_default_loc loc (fun () ->
+        let ttype_decl =
+          let env = Lazy.force lazy_env in
+          match lid with
+          | Lapply _ ->
+            raise_errorf ~loc
+              "[%%import] cannot import a functor application %s"
+              (string_of_lid lid)
+          | Lident _ as head_id ->
+            (* In this case, we know for sure that the user intends this lident
+               as a type name, so we use Typetexp.find_type and let the failure
+               cases propagate to the user. *)
+            Compat.find_type env ~loc head_id |> snd
+          | Ldot (parent_id, elem) ->
+            let sig_items = locate_sig ~loc env parent_id in
+            get_type_decl ~loc sig_items parent_id elem
+        in
+        let m, s = if is_self_reference lid then
+            None, []
           else begin
             let subst = subst_of_manifest manifest in
             let subst = subst @ [
-                `Lid (Lident (Longident.last lid)),
-                Typ.constr { txt = Lident ptype_name.txt; loc = ptype_name.loc } []
-              ] in
+              `Lid (Lident (Longident.last lid)),
+              Typ.constr { txt = Lident ptype_name.txt; loc = ptype_name.loc } []
+            ] in
             Some manifest, subst
           end
-          in
-          let ptype_decl = ptype_decl_of_ttype_decl ~manifest:m ~subst:s ptype_name ttype_decl in
-          { ptype_decl with ptype_attributes })
-    | _ -> raise_errorf ~loc "Invalid [%%import] syntax"
+        in
+        let ptype_decl = ptype_decl_of_ttype_decl ~manifest:m ~subst:s ptype_name ttype_decl in
+        { ptype_decl with ptype_attributes })
+  | _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type name"
+
+let structure_item ~tool_name mapper item =
+  match item with
+  | { pstr_desc = Pstr_extension (({ txt = "import"; loc}, payload), attributes) ; _ } ->
+    begin match payload, attributes with
+    | PStr [ ({ pstr_desc = Pstr_type (rec_flag, type_decl_list); _ } as item) ], [] ->
+      let type_decl_list = List.map (type_declaration ~tool_name) type_decl_list in
+      { item with pstr_desc = Pstr_type (rec_flag, type_decl_list) }
+    | _, [] -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type declaration"
+    | _, _ :: _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected no attributes"
     end
-  | _ -> default_mapper.type_declaration mapper type_decl
+  | _ -> default_mapper.structure_item mapper item
+
+let signature_item ~tool_name mapper item =
+  match item with
+  | { psig_desc = Psig_extension (({ txt = "import"; loc}, payload), attributes) ; _ } ->
+    begin match payload, attributes with
+    | PSig [ ({ psig_desc = Psig_type (rec_flag, type_decl_list); _ } as item) ], [] ->
+      let type_decl_list = List.map (type_declaration ~tool_name) type_decl_list in
+      { item with psig_desc = Psig_type (rec_flag, type_decl_list) }
+    | _, [] -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type declaration"
+    | _, _ :: _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected no attributes"
+    end
+  | _ -> default_mapper.signature_item mapper item
 
 let rec cut_tsig_block_of_rec_types accu (tsig : Compat.signature_item_407 list) =
   match tsig with
@@ -465,7 +490,7 @@ let module_type ~tool_name mapper modtype_decl =
             raise_errorf ~loc "Imported module is abstract"
           | _ ->
             raise_errorf ~loc "Imported module is indirectly defined")
-    | _ -> raise_errorf ~loc "Invalid [%%import] syntax"
+    | _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected a package type"
     end
   | _ -> default_mapper.module_type mapper modtype_decl
 
@@ -476,6 +501,7 @@ let () =
   Driver.register ~name:"ppx_import" ~args:[] ~position:(-10)
     Versions.ocaml_407 (fun config _cookies ->
         let tool_name = config.tool_name in
-        let type_declaration = type_declaration ~tool_name in
+        let signature_item = signature_item ~tool_name in
+        let structure_item = structure_item ~tool_name in
         let module_type = module_type ~tool_name in
-        { default_mapper with type_declaration; module_type})
+        { default_mapper with signature_item; structure_item; module_type})
