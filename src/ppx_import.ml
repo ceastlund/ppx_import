@@ -224,11 +224,14 @@ let rec core_type_of_type_expr ~subst type_expr =
     let fields =
       row_fields |> List.map (fun (label, row_field) ->
         let label = Location.mknoloc label in
-        match row_field with
-        | Rpresent None -> Rtag (label, [], true, [])
-        | Rpresent (Some ttyp) ->
-          Rtag (label, [], false, [core_type_of_type_expr ~subst ttyp])
-        | _ -> assert false)
+        let prf_desc =
+          match row_field with
+          | Rpresent None -> Rtag (label, true, [])
+          | Rpresent (Some ttyp) ->
+            Rtag (label, false, [core_type_of_type_expr ~subst ttyp])
+          | _ -> assert false
+        in
+        { prf_desc; prf_loc = !default_loc; prf_attributes = [] })
     in
     Typ.variant fields Closed None
   | _ ->
@@ -306,13 +309,18 @@ let subst_of_manifest { ptyp_attributes; ptyp_loc ; _ } =
   let rec subst_of_expr expr =
     match expr with
     | [%expr [%e? { pexp_desc = Pexp_ident ({ txt = src ; _ }) ; _ }] :=
-             [%e? { pexp_desc = Pexp_ident (dst); pexp_attributes; pexp_loc }]] ->
-      [`Lid src, { ptyp_loc = pexp_loc; ptyp_attributes = pexp_attributes;
-                   ptyp_desc = Ptyp_constr (dst, []) }]
+             [%e? { pexp_desc = Pexp_ident (dst); pexp_attributes; pexp_loc; pexp_loc_stack }]] ->
+      [`Lid src, { ptyp_loc = pexp_loc
+                 ; ptyp_loc_stack = pexp_loc_stack
+                 ; ptyp_attributes = pexp_attributes
+                 ; ptyp_desc = Ptyp_constr (dst, []) }]
     | [%expr [%e? { pexp_desc = Pexp_ident ({ txt = src ; _ }) ; _ }] :=
-             [%e? { pexp_desc = Pexp_ident (dst); pexp_attributes; pexp_loc }]; [%e? rest]] ->
-      (`Lid src, { ptyp_loc = pexp_loc; ptyp_attributes = pexp_attributes;
-                   ptyp_desc = Ptyp_constr (dst, []) }) :: subst_of_expr rest
+             [%e? { pexp_desc = Pexp_ident (dst); pexp_attributes; pexp_loc; pexp_loc_stack }];
+             [%e? rest]] ->
+      (`Lid src, { ptyp_loc = pexp_loc
+                 ; ptyp_loc_stack = pexp_loc_stack
+                 ; ptyp_attributes = pexp_attributes
+                 ; ptyp_desc = Ptyp_constr (dst, []) }) :: subst_of_expr rest
     | { pexp_loc ; _ } ->
       raise_errorf ~loc:pexp_loc "Invalid [@with] syntax: expected identifier assignment"
   in
