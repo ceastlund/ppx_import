@@ -1,14 +1,14 @@
 (* Don't mask native Outcometree *)
 module Ot = Outcometree
 
-open Ppx_tools_407
+open Ppx_tools_411
 
 open Migrate_parsetree
-open Ast_407.Longident
-open Ast_407.Asttypes
-open Ast_407.Parsetree
-open Ast_407.Ast_mapper
-open Ast_407.Ast_helper
+open Ast_411.Longident
+open Ast_411.Asttypes
+open Ast_411.Parsetree
+open Ast_411.Ast_mapper
+open Ast_411.Ast_helper
 open Types
 
 module Tt = Ppx_types_migrate
@@ -132,7 +132,7 @@ let locate_sig ~loc env lid =
   let get_sub_module_type (lid, module_type) path_item =
     let sig_items = open_module_type ~loc env lid module_type in
     let rec loop sig_items =
-      match (sig_items : Compat.signature_item_407 list) with
+      match (sig_items : Compat.signature_item_411 list) with
       | Sig_module (id, { md_type ; _ }, _) :: _
         when Ident.name id = path_item ->
         md_type
@@ -409,14 +409,14 @@ let signature_item ~tool_name mapper item =
     end
   | _ -> default_mapper.signature_item mapper item
 
-let rec cut_tsig_block_of_rec_types accu (tsig : Compat.signature_item_407 list) =
+let rec cut_tsig_block_of_rec_types accu (tsig : Compat.signature_item_411 list) =
   match tsig with
   | Sig_type (id, ttype_decl, Trec_next) :: rest ->
       cut_tsig_block_of_rec_types ((id, ttype_decl) :: accu) rest
   | _ ->
       (List.rev accu, tsig)
 
-let rec psig_of_tsig ~subst (tsig : Compat.signature_item_407 list) =
+let rec psig_of_tsig ~subst (tsig : Compat.signature_item_411 list) =
   match tsig with
   | Sig_type (id, ttype_decl, rec_flag) :: rest ->
       let accu = [(id, ttype_decl)] in
@@ -499,7 +499,7 @@ let () =
   (* Position 0 is the default, ppx_import should run pretty early,
      thus using -10 *)
   Driver.register ~name:"ppx_import" ~args:[] ~position:(-10)
-    Versions.ocaml_407 (fun config _cookies ->
+    Versions.ocaml_411 (fun config _cookies ->
         let tool_name = config.tool_name in
         let signature_item = signature_item ~tool_name in
         let structure_item = structure_item ~tool_name in
