@@ -2,6 +2,7 @@
 module Ot = Outcometree
 
 open Ppxlib
+open Ast_builder.Make (struct let loc = Location.none end)
 
 module Clflags = Ocaml_common.Clflags
 module Compmisc = Ocaml_common.Compmisc
@@ -227,7 +228,7 @@ let rec core_type_of_type_expr ~subst type_expr =
   | Tvariant { row_fields; _ } ->
     let fields =
       row_fields |> List.map (fun (label, row_field) ->
-        let label = Location.mknoloc label in
+        let label = Located.mk label in
         let prf_desc =
           match row_field with
           | Rpresent None -> Rtag (label, true, [])
@@ -328,28 +329,26 @@ let subst_of_manifest { ptyp_attributes; ptyp_loc ; _ } =
     | { pexp_loc ; _ } ->
       raise_errorf ~loc:pexp_loc "Invalid [@with] syntax: expected identifier assignment"
   in
-  match Ast_convenience.find_attr "with" ptyp_attributes with
-  | None -> []
-  | Some (PStr [{ pstr_desc = Pstr_eval (expr, []) ; _ }]) ->
+  match List.find (fun attr -> attr.attr_name.txt = "with") ptyp_attributes with
+  | exception Not_found -> []
+  | { attr_payload = PStr [{ pstr_desc = Pstr_eval (expr, []) ; _ }]; _ } ->
     subst_of_expr expr
-  | Some _ ->
+  | _ ->
     raise_errorf ~loc:ptyp_loc "Invalid [@with] syntax: expected an expression"
 
 let uncapitalize = String.uncapitalize_ascii
 
-let is_self_reference lid =
-  let fn = !Location.input_name
-           |> Filename.basename
-           |> Filename.chop_extension
-           |> uncapitalize
+let is_self_reference ~ctxt lid =
+  let fn = Expansion_context.Extension.code_path ctxt
+           |> Code_path.main_module_name
   in
   match lid with
   | Ldot (_) ->
-    let mn = Longident.flatten lid |> List.hd |> uncapitalize
+    let mn = Longident.flatten_exn lid |> List.hd
     in fn = mn
   | _ -> false
 
-let type_declaration ~tool_name type_decl =
+let type_declaration ~ctxt type_decl =
   let loc = type_decl.ptype_loc in
   match type_decl with
   | { ptype_attributes
@@ -358,9 +357,9 @@ let type_declaration ~tool_name type_decl =
         Some ({ ptyp_desc = Ptyp_constr ({ txt = lid; loc }, _) ; _ } as manifest)
     ; _ }
     ->
-    if tool_name = "ocamldep" then
+    if Expansion_context.Extension.tool_name ctxt = "ocamldep" then
       (* Just put it as manifest *)
-      if is_self_reference lid then
+      if is_self_reference ~ctxt lid then
         { type_decl with ptype_manifest = None }
       else
         { type_decl with ptype_manifest = Some manifest }
@@ -382,12 +381,12 @@ let type_declaration ~tool_name type_decl =
             let sig_items = locate_sig ~loc env parent_id in
             get_type_decl ~loc sig_items parent_id elem
         in
-        let m, s = if is_self_reference lid then
+        let m, s = if is_self_reference ~ctxt lid then
             None, []
           else begin
             let subst = subst_of_manifest manifest in
             let subst = subst @ [
-              `Lid (Lident (Longident.last lid)),
+              `Lid (Lident (Longident.last_exn lid)),
               Typ.constr { txt = Lident ptype_name.txt; loc = ptype_name.loc } []
             ] in
             Some manifest, subst
@@ -397,24 +396,24 @@ let type_declaration ~tool_name type_decl =
         { ptype_decl with ptype_attributes })
   | _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type name"
 
-let structure_item ~tool_name mapper item =
+let structure_item ~ctxt mapper item =
   match item with
   | { pstr_desc = Pstr_extension (({ txt = "import"; loc}, payload), attributes) ; _ } ->
     begin match payload, attributes with
     | PStr [ ({ pstr_desc = Pstr_type (rec_flag, type_decl_list); _ } as item) ], [] ->
-      let type_decl_list = List.map (type_declaration ~tool_name) type_decl_list in
+      let type_decl_list = List.map (type_declaration ~ctxt) type_decl_list in
       { item with pstr_desc = Pstr_type (rec_flag, type_decl_list) }
     | _, [] -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type declaration"
     | _, _ :: _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected no attributes"
     end
   | _ -> default_mapper.structure_item mapper item
 
-let signature_item ~tool_name mapper item =
+let signature_item ~ctxt mapper item =
   match item with
   | { psig_desc = Psig_extension (({ txt = "import"; loc}, payload), attributes) ; _ } ->
     begin match payload, attributes with
     | PSig [ ({ psig_desc = Psig_type (rec_flag, type_decl_list); _ } as item) ], [] ->
-      let type_decl_list = List.map (type_declaration ~tool_name) type_decl_list in
+      let type_decl_list = List.map (type_declaration ~ctxt) type_decl_list in
       { item with psig_desc = Psig_type (rec_flag, type_decl_list) }
     | _, [] -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type declaration"
     | _, _ :: _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected no attributes"
@@ -439,7 +438,7 @@ let rec psig_of_tsig ~subst (tsig : Compat.signature_item_411 list) =
         | Trec_next -> assert false in
       let block = block |> List.map (fun (id, ttype_decl) ->
         ptype_decl_of_ttype_decl ~manifest:None ~subst
-          (Location.mknoloc (Ident.name id)) ttype_decl) in
+          (Located.mk (Ident.name id)) ttype_decl) in
       let psig_desc = Psig_type(rec_flag, block) in
       { psig_desc; psig_loc = Location.none } :: psig_of_tsig ~subst rest
   | Sig_value (id, { val_type; val_kind; val_loc; val_attributes; _ }) :: rest ->
@@ -454,7 +453,7 @@ let rec psig_of_tsig ~subst (tsig : Compat.signature_item_411 list) =
       | _ -> assert false
     in
     { psig_desc = Psig_value {
-        pval_name = Location.mknoloc (Ident.name id); pval_loc = val_loc;
+        pval_name = Located.mk (Ident.name id); pval_loc = val_loc;
         pval_attributes = Tt.copy_attributes val_attributes;
         pval_prim; pval_type = core_type_of_type_expr ~subst val_type; };
       psig_loc = val_loc } ::
