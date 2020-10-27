@@ -13,19 +13,15 @@ module Types = Ocaml_common.Types
 module Untypeast = Ocaml_common.Untypeast
 
 open Migrate_parsetree
-open Ast_411.Longident
-open Ast_411.Asttypes
-open Ast_411.Parsetree
-open Ast_411.Ast_mapper
-open Ast_411.Ast_helper
+open Ppxlib.Longident
+open Ppxlib.Asttypes
+open Ppxlib.Parsetree
+open Ppxlib.Ast_helper
 open Types
 
 module Tt = Ppx_types_migrate
 
 let raise_errorf = Location.raise_errorf
-
-let replace_loc loc =
-  { default_mapper with location = fun _ _ -> loc }
 
 let lazy_env = lazy (
   (* It is important that the typing environment is not evaluated
