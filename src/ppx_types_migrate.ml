@@ -2,12 +2,10 @@ module At = Asttypes
 module Pt = Parsetree
 module Ot = Outcometree
 
-open Migrate_parsetree
-module Ab = Ast_411.Asttypes
-module Pb = Ast_411.Parsetree
-module Ob = Ast_411.Outcometree
+module Ab = Ppxlib.Asttypes
+module Pb = Ppxlib.Parsetree
 
-module IMigrate = Convert(Versions.OCaml_current)(Versions.OCaml_411)
+module IMigrate = Ppxlib.Selected_ast.Of_ocaml
 
 (* copy_mutable_flag / private_flag / arg_label are not exported by
    OMP so not worth the pain of the hack *)

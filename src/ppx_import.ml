@@ -12,7 +12,6 @@ module Primitive = Ocaml_common.Primitive
 module Types = Ocaml_common.Types
 module Untypeast = Ocaml_common.Untypeast
 
-open Migrate_parsetree
 open Ppxlib.Longident
 open Ppxlib.Asttypes
 open Ppxlib.Parsetree
@@ -333,8 +332,6 @@ let subst_of_manifest { ptyp_attributes; ptyp_loc ; _ } =
   | _ ->
     raise_errorf ~loc:ptyp_loc "Invalid [@with] syntax: expected an expression"
 
-let uncapitalize = String.uncapitalize_ascii
-
 let is_self_reference ~ctxt lid =
   let fn = Expansion_context.Extension.code_path ctxt
            |> Code_path.main_module_name
@@ -397,17 +394,9 @@ let structure_item ~ctxt loc rec_flag type_decl_list =
   let type_decl_list = List.map (type_declaration ~ctxt) type_decl_list in
   { pstr_desc = Pstr_type (rec_flag, type_decl_list); pstr_loc = loc }
 
-let signature_item ~ctxt mapper item =
-  match item with
-  | { psig_desc = Psig_extension (({ txt = "import"; loc}, payload), attributes) ; _ } ->
-    begin match payload, attributes with
-    | PSig [ ({ psig_desc = Psig_type (rec_flag, type_decl_list); _ } as item) ], [] ->
-      let type_decl_list = List.map (type_declaration ~ctxt) type_decl_list in
-      { item with psig_desc = Psig_type (rec_flag, type_decl_list) }
-    | _, [] -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type declaration"
-    | _, _ :: _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected no attributes"
-    end
-  | _ -> default_mapper.signature_item mapper item
+let signature_item ~ctxt loc rec_flag type_decl_list =
+  let type_decl_list = List.map (type_declaration ~ctxt) type_decl_list in
+  { psig_desc = Psig_type (rec_flag, type_decl_list); psig_loc = loc }
 
 let rec cut_tsig_block_of_rec_types accu (tsig : Compat.signature_item_411 list) =
   match tsig with
@@ -450,49 +439,42 @@ let rec psig_of_tsig ~subst (tsig : Compat.signature_item_411 list) =
   | [] -> []
   | _ -> assert false
 
-let module_type ~ctxt mapper modtype_decl =
-  match modtype_decl with
-  | { pmty_attributes = _; pmty_desc = Pmty_extension ({ txt = "import"; loc }, payload) ; _ } ->
-    begin match payload with
-    | PTyp ({ ptyp_desc = Ptyp_package({ txt = lid; loc } as alias, subst) ; _ }) ->
-      if Expansion_context.Extension.tool_name ctxt = "ocamldep" then
-        if is_self_reference ~ctxt lid then
-          (* Create a dummy module type to break the circular dependency *)
-          { modtype_decl with pmty_desc = Pmty_signature [] }
-        else
-          (* Just put it as alias *)
-          { modtype_decl with pmty_desc = Pmty_alias alias }
-      else
-        with_default_loc loc (fun () ->
-          let env = Lazy.force lazy_env in
-          let tmodtype_decl = match lid with
-            | Longident.Lapply _ ->
-              raise_errorf ~loc
-                "[%%import] cannot import a functor application %s"
-                (string_of_lid lid)
-            | Longident.Lident _ as head_id ->
-              (* In this case, we know for sure that the user intends this lident
-                 as a module type name, so we use Typetexp.find_type and
-                 let the failure cases propagate to the user. *)
-              Compat.find_modtype env ~loc head_id |> snd
-            | Longident.Ldot (parent_id, elem) ->
-              let sig_items = locate_sig ~loc env parent_id in
-              get_modtype_decl ~loc sig_items parent_id elem
-          in
-          match tmodtype_decl with
-          | { mtd_type = Some (Mty_signature tsig) ; _} ->
-            let subst = List.map (fun ({ txt ; _ }, typ) -> `Lid txt, typ) subst in
-            let psig =
-              psig_of_tsig ~subst (List.map Compat.migrate_signature_item tsig)
-            in
-            { modtype_decl with pmty_desc = Pmty_signature psig }
-          | { mtd_type = None ; _ } ->
-            raise_errorf ~loc "Imported module is abstract"
-          | _ ->
-            raise_errorf ~loc "Imported module is indirectly defined")
-    | _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected a package type"
-    end
-  | _ -> default_mapper.module_type mapper modtype_decl
+let module_type ~ctxt loc alias subst =
+  if Expansion_context.Extension.tool_name ctxt = "ocamldep" then
+    if is_self_reference ~ctxt alias.txt then
+      (* Create a dummy module type to break the circular dependency *)
+      { pmty_desc = Pmty_signature []; pmty_loc = loc; pmty_attributes = [] }
+    else
+      (* Just put it as alias *)
+      { pmty_desc = Pmty_alias alias; pmty_loc = loc; pmty_attributes = [] }
+  else
+    with_default_loc loc (fun () ->
+      let env = Lazy.force lazy_env in
+      let tmodtype_decl = match alias.txt with
+        | Longident.Lapply _ ->
+          raise_errorf ~loc
+            "[%%import] cannot import a functor application %s"
+            (string_of_lid alias.txt)
+        | Longident.Lident _ as head_id ->
+          (* In this case, we know for sure that the user intends this lident
+             as a module type name, so we use Typetexp.find_type and
+             let the failure cases propagate to the user. *)
+          Compat.find_modtype env ~loc head_id |> snd
+        | Longident.Ldot (parent_id, elem) ->
+          let sig_items = locate_sig ~loc env parent_id in
+          get_modtype_decl ~loc sig_items parent_id elem
+      in
+      match tmodtype_decl with
+      | { mtd_type = Some (Mty_signature tsig) ; _} ->
+        let subst = List.map (fun ({ txt ; _ }, typ) -> `Lid txt, typ) subst in
+        let psig =
+          psig_of_tsig ~subst (List.map Compat.migrate_signature_item tsig)
+        in
+        { pmty_desc = Pmty_signature psig; pmty_loc = loc; pmty_attributes = [] }
+      | { mtd_type = None ; _ } ->
+        raise_errorf ~loc "Imported module is abstract"
+      | _ ->
+        raise_errorf ~loc "Imported module is indirectly defined")
 
 let () =
   let extensions =
@@ -510,7 +492,7 @@ let () =
       Extension.V3.declare
         "import"
         Module_type
-        Ast_pattern.(ptyp (ptyp_loc __ (ptyp_package __ __)))
+        Ast_pattern.(ptyp (ptyp_loc __ (ptyp_package (pair __ __))))
         module_type;
     ]
   in
