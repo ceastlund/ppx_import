@@ -1,7 +1,14 @@
 (* Don't mask native Outcometree *)
 module Ot = Outcometree
 
-open Ppx_tools_411
+open Ppxlib
+
+module Clflags = Ocaml_common.Clflags
+module Compmisc = Ocaml_common.Compmisc
+module Env = Ocaml_common.Env
+module Ident = Ocaml_common.Ident
+module Types = Ocaml_common.Types
+module Untypeast = Ocaml_common.Untypeast
 
 open Migrate_parsetree
 open Ast_411.Longident
@@ -13,10 +20,7 @@ open Types
 
 module Tt = Ppx_types_migrate
 
-let raise_errorf ?sub ?loc message =
-  message |> Printf.kprintf (fun str ->
-    let err = Location.error ?sub ?loc str in
-    raise (Location.Error err))
+let raise_errorf = Location.raise_errorf
 
 let replace_loc loc =
   { default_mapper with location = fun _ _ -> loc }
@@ -100,7 +104,7 @@ let rec try_open_module_type env module_type =
   | Mty_functor _ -> None
   | (Mty_ident path | Mty_alias (_, path) ) ->
     begin match
-        (try Some (Env.find_module path env) with Not_found -> None)
+      (try Some (Env.find_module path env) with Not_found -> None)
       with
       | None -> None
       | Some module_decl -> try_open_module_type env module_decl.md_type
@@ -114,7 +118,7 @@ let open_module_type ~loc env lid module_type =
       (string_of_lid lid)
 
 let locate_sig ~loc env lid =
-  let head, path = match Longident.flatten lid with
+  let head, path = match Longident.flatten_exn lid with
     | head :: path -> Longident.Lident head, path
     | _ -> assert false
   in
