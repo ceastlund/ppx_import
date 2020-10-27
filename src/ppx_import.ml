@@ -8,6 +8,7 @@ module Clflags = Ocaml_common.Clflags
 module Compmisc = Ocaml_common.Compmisc
 module Env = Ocaml_common.Env
 module Ident = Ocaml_common.Ident
+module Primitive = Ocaml_common.Primitive
 module Types = Ocaml_common.Types
 module Untypeast = Ocaml_common.Untypeast
 
@@ -461,13 +462,13 @@ let rec psig_of_tsig ~subst (tsig : Compat.signature_item_411 list) =
   | [] -> []
   | _ -> assert false
 
-let module_type ~tool_name mapper modtype_decl =
+let module_type ~ctxt mapper modtype_decl =
   match modtype_decl with
   | { pmty_attributes = _; pmty_desc = Pmty_extension ({ txt = "import"; loc }, payload) ; _ } ->
     begin match payload with
     | PTyp ({ ptyp_desc = Ptyp_package({ txt = lid; loc } as alias, subst) ; _ }) ->
-      if tool_name = "ocamldep" then
-        if is_self_reference lid then
+      if Expansion_context.Extension.tool_name ctxt = "ocamldep" then
+        if is_self_reference ~ctxt lid then
           (* Create a dummy module type to break the circular dependency *)
           { modtype_decl with pmty_desc = Pmty_signature [] }
         else
