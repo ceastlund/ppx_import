@@ -507,13 +507,24 @@ let module_type ~ctxt mapper modtype_decl =
   | _ -> default_mapper.module_type mapper modtype_decl
 
 let () =
-  let open Migrate_parsetree in
-  (* Position 0 is the default, ppx_import should run pretty early,
-     thus using -10 *)
-  Driver.register ~name:"ppx_import" ~args:[] ~position:(-10)
-    Versions.ocaml_411 (fun config _cookies ->
-        let tool_name = config.tool_name in
-        let signature_item = signature_item ~tool_name in
-        let structure_item = structure_item ~tool_name in
-        let module_type = module_type ~tool_name in
-        { default_mapper with signature_item; structure_item; module_type})
+  let extensions =
+    [
+      Extension.V3.declare
+        "import"
+        Structure_item
+        Ast_pattern.(pstr (__ ^:: nil))
+        structure_item;
+      Extension.V3.declare
+        "import"
+        Signature_item
+        Ast_pattern.(psig (__ ^:: nil))
+        signature_item;
+      Extension.V3.declare
+        "import"
+        Module_type
+        Ast_pattern.__
+        module_type;
+    ]
+  in
+  Driver.register_transformation "ppx_import"
+    ~rules:(List.map Context_free.Rule.extension extensions)
