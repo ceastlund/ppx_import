@@ -397,17 +397,9 @@ let type_declaration ~ctxt type_decl =
         { ptype_decl with ptype_attributes })
   | _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type name"
 
-let structure_item ~ctxt mapper item =
-  match item with
-  | { pstr_desc = Pstr_extension (({ txt = "import"; loc}, payload), attributes) ; _ } ->
-    begin match payload, attributes with
-    | PStr [ ({ pstr_desc = Pstr_type (rec_flag, type_decl_list); _ } as item) ], [] ->
-      let type_decl_list = List.map (type_declaration ~ctxt) type_decl_list in
-      { item with pstr_desc = Pstr_type (rec_flag, type_decl_list) }
-    | _, [] -> raise_errorf ~loc "Invalid [%%import] syntax: expected a type declaration"
-    | _, _ :: _ -> raise_errorf ~loc "Invalid [%%import] syntax: expected no attributes"
-    end
-  | _ -> default_mapper.structure_item mapper item
+let structure_item ~ctxt loc rec_flag type_decl_list =
+  let type_decl_list = List.map (type_declaration ~ctxt) type_decl_list in
+  { pstr_desc = Pstr_type (rec_flag, type_decl_list); pstr_loc = loc }
 
 let signature_item ~ctxt mapper item =
   match item with
@@ -512,17 +504,17 @@ let () =
       Extension.V3.declare
         "import"
         Structure_item
-        Ast_pattern.(pstr (__ ^:: nil))
+        Ast_pattern.(pstr (pstr_loc __ (pstr_type __ __) ^:: nil))
         structure_item;
       Extension.V3.declare
         "import"
         Signature_item
-        Ast_pattern.(psig (__ ^:: nil))
+        Ast_pattern.(psig (psig_loc __ (psig_type __ __) ^:: nil))
         signature_item;
       Extension.V3.declare
         "import"
         Module_type
-        Ast_pattern.__
+        Ast_pattern.(ptyp (ptyp_loc __ (ptyp_package __ __)))
         module_type;
     ]
   in
